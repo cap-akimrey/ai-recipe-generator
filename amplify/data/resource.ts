@@ -6,7 +6,7 @@ const schema = a.schema({
     body: a.string(),
     error: a.string(),
   }),
-  generateRecipe: a
+  askBedrock: a
     .query()
     .arguments({ ingredients: a.string().array() })
     .returns(a.ref("BedrockResponse"))

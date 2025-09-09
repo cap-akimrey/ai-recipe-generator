@@ -94,7 +94,7 @@ function signBedrockRequest(path, body) {
   };
   if (sessionToken) requestHeaders['X-Amz-Security-Token'] = sessionToken;
 
-  return { headers: requestHeaders, canonicalPath: canonicalUri };
+  return requestHeaders;
 }
 
 function httpsRequest(options, body) {
@@ -141,8 +141,8 @@ export async function handler(event) {
     const body = JSON.stringify(payload);
 
     const rawPath = `/model/${MODEL_ID}/invoke`;
-    const signed = signBedrockRequest(rawPath, body);
-    const res = await httpsRequest({ method: 'POST', host: HOST, path: signed.canonicalPath, headers: signed.headers }, body);
+    const headers = signBedrockRequest(rawPath, body);
+    const res = await httpsRequest({ method: 'POST', host: HOST, path: rawPath, headers }, body);
 
     if (res.statusCode < 200 || res.statusCode >= 300) {
       let detail = '';
