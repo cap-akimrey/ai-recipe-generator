@@ -20,11 +20,21 @@ function App() {
     setLoading(true);
     try {
       const formData = new FormData(event.currentTarget);
-      const { data, errors } = await amplifyClient.queries.askBedrock({
-        ingredients: [formData.get("ingredients")?.toString() || ""],
+      const raw = formData.get("ingredients")?.toString() || "";
+      const ingredients = raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const { data, errors } = await amplifyClient.queries.generateRecipe({
+        ingredients,
       });
       if (!errors) {
-        setResult(data?.body || "No data returned");
+        if (data?.error) {
+          setResult(`Error: ${data.error}`);
+        } else {
+          setResult(data?.body || "No data returned");
+        }
       } else {
         setResult(`Error: ${errors[0]?.message || 'Unknown error'}`);
       }
@@ -61,8 +71,8 @@ function App() {
             name="ingredients"
             placeholder="Ingredient1, Ingredient2, Ingredient3,...etc"
           />
-          <button type="submit" className="search-button">
-            Generate
+          <button type="submit" className="search-button" disabled={loading}>
+            {loading ? 'Generating…' : 'Generate'}
           </button>
         </div>
       </form>

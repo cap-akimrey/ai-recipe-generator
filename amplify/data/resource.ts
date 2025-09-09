@@ -1,21 +1,17 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
+import { bedrockFn } from "../functions/bedrock/resource";
 
 const schema = a.schema({
   BedrockResponse: a.customType({
     body: a.string(),
     error: a.string(),
   }),
-  askBedrock: a
+  generateRecipe: a
     .query()
     .arguments({ ingredients: a.string().array() })
     .returns(a.ref("BedrockResponse"))
-    .authorization((allow) => [allow.authenticated()])
-    .handler(
-      a.handler.custom({
-        entry: "./bedrock.js",
-        dataSource: "bedrockDS"
-      })
-    ),
+    .authorization((allow) => [allow.authenticated('userPools')])
+    .handler(a.handler.function(bedrockFn)),
 });
 
 export type Schema = ClientSchema<typeof schema>;
