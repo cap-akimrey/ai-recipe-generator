@@ -1,8 +1,8 @@
-// Lambda resolver for askBedrock using AWS SigV4 + https (no external deps)
+// Lambda resolver for generateRecipe using AWS SigV4 + https (no external deps)
 // Returns: { body: string, error: string }
 
-const https = require('https');
-const crypto = require('crypto');
+import https from 'node:https';
+import crypto from 'node:crypto';
 
 const REGION = 'us-east-1';
 const SERVICE = 'bedrock';
@@ -24,6 +24,16 @@ function getSigningKey(secretAccessKey, date, region, service) {
   return kSigning;
 }
 
+function encodeRfc3986(str) {
+  return encodeURIComponent(str).replace(/[!*'()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+function canonicalizePath(path) {
+  // Preserve leading slash by keeping empty first segment
+  const parts = path.split('/');
+  const encoded = parts.map((seg) => encodeRfc3986(seg));
+  return encoded.join('/');
+}
+
 function signBedrockRequest(path, body) {
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID || '';
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || '';
@@ -33,11 +43,11 @@ function signBedrockRequest(path, body) {
   }
 
   const iso = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const amzDate = iso.slice(0, 15) + 'Z';
+  const amzDate = iso.slice(0, 15) + 'Z'; // YYYYMMDDTHHMMSSZ
   const dateStamp = amzDate.slice(0, 8);
 
   const method = 'POST';
-  const canonicalUri = path;
+  const canonicalUri = canonicalizePath(path);
   const canonicalQuerystring = '';
 
   const headers = {
@@ -84,7 +94,7 @@ function signBedrockRequest(path, body) {
   };
   if (sessionToken) requestHeaders['X-Amz-Security-Token'] = sessionToken;
 
-  return requestHeaders;
+  return { headers: requestHeaders, canonicalPath: canonicalUri };
 }
 
 function httpsRequest(options, body) {
@@ -103,9 +113,7 @@ function httpsRequest(options, body) {
   });
 }
 
-exports.handler = async (event) => {
-  // Quick wiring check: uncomment return below to verify Lambda is invoked
-  // return { body: 'lambda-live', error: '' };
+export async function handler(event) {
   try {
     const args = event && event.arguments ? event.arguments : {};
     const ingredients = Array.isArray(args.ingredients) ? args.ingredients : [];
@@ -132,12 +140,22 @@ exports.handler = async (event) => {
     };
     const body = JSON.stringify(payload);
 
-    const path = `/model/${MODEL_ID}/invoke`;
-    const headers = signBedrockRequest(path, body);
-    const res = await httpsRequest({ method: 'POST', host: HOST, path, headers }, body);
+    const rawPath = `/model/${MODEL_ID}/invoke`;
+    const signed = signBedrockRequest(rawPath, body);
+    const res = await httpsRequest({ method: 'POST', host: HOST, path: signed.canonicalPath, headers: signed.headers }, body);
 
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      return { body: '', error: 'Bedrock error: status ' + String(res.statusCode) };
+      let detail = '';
+      try {
+        const errJson = JSON.parse(res.body || '{}');
+        const code = errJson.__type || errJson.code || errJson.error || '';
+        const msg = errJson.message || errJson.Message || JSON.stringify(errJson);
+        detail = (code ? code + ': ' : '') + msg;
+      } catch (_e) {
+        detail = res.body || '';
+      }
+      const snippet = String(detail).slice(0, 500);
+      return { body: '', error: 'Bedrock error: status ' + String(res.statusCode) + (snippet ? ' - ' + snippet : '') };
     }
 
     let parsed;
@@ -161,4 +179,4 @@ exports.handler = async (event) => {
   } catch (err) {
     return { body: '', error: 'Handler error: ' + String(err && err.message ? err.message : err) };
   }
-};
+}
