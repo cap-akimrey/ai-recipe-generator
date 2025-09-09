@@ -26,19 +26,12 @@ function App() {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const { data, errors } = await amplifyClient.graphql({
-        query: `query Ask($ingredients: [String!]!) {
-          askBedrock(ingredients: $ingredients) { body error }
-        }`,
-        variables: { ingredients },
-        authMode: 'userPool',
-      });
+      const { data, errors } = await amplifyClient.queries.askBedrock({ ingredients });
       if (!errors) {
-        const payload = (data as any)?.askBedrock;
-        if (payload?.error) {
-          setResult(`Error: ${payload.error}`);
+        if (data?.error) {
+          setResult(`Error: ${data.error}`);
         } else {
-          setResult(payload?.body || "No data returned");
+          setResult(data?.body || "No data returned");
         }
       } else {
         setResult(`Error: ${errors[0]?.message || 'Unknown error'}`);
