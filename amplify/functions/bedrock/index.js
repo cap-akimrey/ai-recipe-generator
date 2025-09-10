@@ -116,8 +116,32 @@ function httpsRequest(options, body) {
   });
 }
 
+function extractJson(text) {
+  try {
+    const trimmed = String(text || '').trim();
+    // Remove Markdown code fences if present
+    const fenceMatch = trimmed.match(/```(?:json)?([\s\S]*?)```/i);
+    const jsonStr = fenceMatch ? fenceMatch[1].trim() : trimmed;
+    return JSON.parse(jsonStr);
+  } catch (_e) {
+    return null;
+  }
+}
+
 async function invokeTextModel(ingredients) {
-  const prompt = 'Suggest a complete, well-formatted recipe using these ingredients: ' + ingredients.join(', ') + '. Include title, servings, ingredients list with amounts, and numbered steps.';
+  const prompt = [
+    'You are a helpful chef. Using ONLY these ingredients (you may add pantry staples like salt, pepper, oil, water):',
+    ingredients.join(', '),
+    '',
+    'Produce output strictly as minified JSON with two fields:',
+    '{"recipe":"<markdown recipe>","image_prompt":"<concise photorealistic dish prompt>"}',
+    '',
+    'Constraints:',
+    '- recipe: Complete, well-formatted Markdown with title, servings, ingredients with amounts, and numbered steps.',
+    '- image_prompt: 1–2 sentences describing the final plated dish, photorealistic food photography, no quantities, no instructions, suitable for text-to-image models.',
+    '- Output ONLY the JSON object without any commentary.'
+  ].join('\n');
+
   const payload = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: 1000,
@@ -162,15 +186,20 @@ async function invokeTextModel(ingredients) {
   }
 
   if (!outText) {
-    return { text: '', error: 'Unexpected Bedrock text response format' };
+    return { text: '', imagePrompt: '', error: 'Unexpected Bedrock text response format' };
   }
 
-  return { text: String(outText), error: '' };
+  const maybe = extractJson(outText);
+  if (!maybe || typeof maybe.recipe !== 'string' || typeof maybe.image_prompt !== 'string') {
+    return { text: '', imagePrompt: '', error: 'Text model did not return expected JSON' };
+  }
+
+  return { text: String(maybe.recipe), imagePrompt: String(maybe.image_prompt), error: '' };
 }
 
-async function invokeImageModel(ingredients) {
-  // Basic food photography prompt from ingredients
-  const foodPrompt = `Professional food photography of a beautifully plated dish made with ${ingredients.join(', ')}. Natural light, shallow depth of field, 50mm lens, high detail, appetizing, restaurant style.`;
+async function invokeImageModel(prompt) {
+  // Use the recipe-derived prompt
+  const foodPrompt = `${prompt} Professional food photography, natural light, shallow depth of field, appetizing, restaurant plating.`;
 
   // Stability SDXL payload for Bedrock
   const payload = {
@@ -231,14 +260,14 @@ export async function handler(event) {
       }
     }
 
-    // 1) Generate recipe text
+    // 1) Generate recipe text and a matching image prompt
     const textRes = await invokeTextModel(safeIngredients);
     if (textRes.error) {
       return { body: '', error: textRes.error };
     }
 
-    // 2) Generate an image for the recipe
-    const imgRes = await invokeImageModel(safeIngredients);
+    // 2) Generate an image for the recipe using the model-provided image prompt
+    const imgRes = await invokeImageModel(textRes.imagePrompt || '');
     // Even if image fails, return text with image error in error field
     const errorMsg = imgRes.error ? `Image: ${imgRes.error}` : '';
     return { body: String(textRes.text), imageBase64: imgRes.base64 || '', imageMimeType: imgRes.mime || '', error: errorMsg };
