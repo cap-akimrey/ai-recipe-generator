@@ -11,6 +11,7 @@ backend.bedrockFn.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     resources: [
       "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "arn:aws:bedrock:us-east-1::foundation-model/stability.stable-diffusion-xl-v1",
     ],
     actions: ["bedrock:InvokeModel"],
   })

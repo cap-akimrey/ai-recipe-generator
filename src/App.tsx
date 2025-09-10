@@ -14,6 +14,7 @@ const amplifyClient = generateClient<Schema>({
 function App() {
   const { user, signOut } = useAuthenticator((context) => [context.user]);
   const [result, setResult] = useState<string>("");
+  const [imageUrl, setImageUrl] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -28,13 +29,19 @@ function App() {
 
       const { data, errors } = await amplifyClient.queries.askBedrock({ ingredients });
       if (!errors) {
-        if (data?.error) {
-          setResult(`Error: ${data.error}`);
+        const err = data?.error;
+        const text = data?.body || "No data returned";
+        const b64 = (data as any)?.imageBase64 as string | undefined;
+        const mime = (data as any)?.imageMimeType as string | undefined;
+        setResult(err ? `Error: ${err}\n\n${text}` : text);
+        if (b64 && mime) {
+          setImageUrl(`data:${mime};base64,${b64}`);
         } else {
-          setResult(data?.body || "No data returned");
+          setImageUrl("");
         }
       } else {
         setResult(`Error: ${errors[0]?.message || 'Unknown error'}`);
+        setImageUrl("");
       }
     } catch (e) {
       alert(`An error occurred: ${e}`);
@@ -84,7 +91,14 @@ function App() {
             <Placeholder size="large" />
           </div>
         ) : (
-          result && <p className="result">{result}</p>
+          <>
+            {imageUrl && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+                <img src={imageUrl} alt="Generated dish" style={{ maxWidth: '100%', borderRadius: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }} />
+              </div>
+            )}
+            {result && <p className="result">{result}</p>}
+          </>
         )}
       </div>
     </div>

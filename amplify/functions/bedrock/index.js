@@ -8,6 +8,9 @@ const REGION = 'us-east-1';
 const SERVICE = 'bedrock';
 const HOST = `bedrock-runtime.${REGION}.amazonaws.com`;
 const MODEL_ID = 'anthropic.claude-3-5-sonnet-20240620-v1:0';
+// Image model: choose a commonly available Bedrock model
+// You can switch to Titan or SDXL depending on your account access
+const IMAGE_MODEL_ID = 'stability.stable-diffusion-xl-v1';
 
 function hmac(key, data) {
   return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
@@ -113,6 +116,107 @@ function httpsRequest(options, body) {
   });
 }
 
+async function invokeTextModel(ingredients) {
+  const prompt = 'Suggest a complete, well-formatted recipe using these ingredients: ' + ingredients.join(', ') + '. Include title, servings, ingredients list with amounts, and numbered steps.';
+  const payload = {
+    anthropic_version: 'bedrock-2023-05-31',
+    max_tokens: 1000,
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '\n\nHuman: ' + prompt + '\n\nAssistant:' }],
+      },
+    ],
+  };
+  const body = JSON.stringify(payload);
+
+  const rawPath = `/model/${MODEL_ID}/invoke`;
+  const headers = signBedrockRequest(rawPath, body);
+  const res = await httpsRequest({ method: 'POST', host: HOST, path: rawPath, headers }, body);
+
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    let detail = '';
+    try {
+      const errJson = JSON.parse(res.body || '{}');
+      const code = errJson.__type || errJson.code || errJson.error || '';
+      const msg = errJson.message || errJson.Message || JSON.stringify(errJson);
+      detail = (code ? code + ': ' : '') + msg;
+    } catch (_e) {
+      detail = res.body || '';
+    }
+    const snippet = String(detail).slice(0, 500);
+    return { text: '', error: 'Bedrock text error: status ' + String(res.statusCode) + (snippet ? ' - ' + snippet : '') };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(res.body || '{}');
+  } catch (e) {
+    return { text: '', error: 'Failed to parse Bedrock text response JSON' };
+  }
+
+  let outText = '';
+  if (parsed && parsed.content && Array.isArray(parsed.content) && parsed.content.length > 0) {
+    const c0 = parsed.content[0];
+    if (c0 && typeof c0.text === 'string') outText = c0.text;
+  }
+
+  if (!outText) {
+    return { text: '', error: 'Unexpected Bedrock text response format' };
+  }
+
+  return { text: String(outText), error: '' };
+}
+
+async function invokeImageModel(ingredients) {
+  // Basic food photography prompt from ingredients
+  const foodPrompt = `Professional food photography of a beautifully plated dish made with ${ingredients.join(', ')}. Natural light, shallow depth of field, 50mm lens, high detail, appetizing, restaurant style.`;
+
+  // Stability SDXL payload for Bedrock
+  const payload = {
+    text_prompts: [
+      { text: foodPrompt },
+      { text: 'low quality, blurry, watermark, text, logo, duplicate', weight: -1 },
+    ],
+    cfg_scale: 7,
+    steps: 40,
+    samples: 1,
+    width: 512,
+    height: 512,
+    clip_guidance_preset: 'FAST_BLUE',
+  };
+  const body = JSON.stringify(payload);
+
+  const rawPath = `/model/${IMAGE_MODEL_ID}/invoke`;
+  const headers = signBedrockRequest(rawPath, body);
+  const res = await httpsRequest({ method: 'POST', host: HOST, path: rawPath, headers }, body);
+
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    let detail = '';
+    try {
+      const errJson = JSON.parse(res.body || '{}');
+      const code = errJson.__type || errJson.code || errJson.error || '';
+      const msg = errJson.message || errJson.Message || JSON.stringify(errJson);
+      detail = (code ? code + ': ' : '') + msg;
+    } catch (_e) {
+      detail = res.body || '';
+    }
+    const snippet = String(detail).slice(0, 500);
+    return { base64: '', mime: '', error: 'Bedrock image error: status ' + String(res.statusCode) + (snippet ? ' - ' + snippet : '') };
+  }
+
+  try {
+    const json = JSON.parse(res.body || '{}');
+    // Stability returns { artifacts: [{ base64, ... }] }
+    const b64 = json && json.artifacts && Array.isArray(json.artifacts) && json.artifacts[0] && json.artifacts[0].base64 ? json.artifacts[0].base64 : '';
+    if (!b64) return { base64: '', mime: '', error: 'Unexpected Bedrock image response format' };
+    return { base64: b64, mime: 'image/png', error: '' };
+  } catch (e) {
+    // If not JSON, some models return binary—fallback not handled here
+    return { base64: '', mime: '', error: 'Failed to parse Bedrock image response JSON' };
+  }
+}
+
 export async function handler(event) {
   try {
     const args = event && event.arguments ? event.arguments : {};
@@ -127,55 +231,17 @@ export async function handler(event) {
       }
     }
 
-    const prompt = 'Suggest a recipe idea using these ingredients: ' + safeIngredients.join(', ') + '.';
-    const payload = {
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 1000,
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: '\n\nHuman: ' + prompt + '\n\nAssistant:' }],
-        },
-      ],
-    };
-    const body = JSON.stringify(payload);
-
-    const rawPath = `/model/${MODEL_ID}/invoke`;
-    const headers = signBedrockRequest(rawPath, body);
-    const res = await httpsRequest({ method: 'POST', host: HOST, path: rawPath, headers }, body);
-
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      let detail = '';
-      try {
-        const errJson = JSON.parse(res.body || '{}');
-        const code = errJson.__type || errJson.code || errJson.error || '';
-        const msg = errJson.message || errJson.Message || JSON.stringify(errJson);
-        detail = (code ? code + ': ' : '') + msg;
-      } catch (_e) {
-        detail = res.body || '';
-      }
-      const snippet = String(detail).slice(0, 500);
-      return { body: '', error: 'Bedrock error: status ' + String(res.statusCode) + (snippet ? ' - ' + snippet : '') };
+    // 1) Generate recipe text
+    const textRes = await invokeTextModel(safeIngredients);
+    if (textRes.error) {
+      return { body: '', error: textRes.error };
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(res.body || '{}');
-    } catch (e) {
-      return { body: '', error: 'Failed to parse Bedrock response JSON' };
-    }
-
-    let outText = '';
-    if (parsed && parsed.content && Array.isArray(parsed.content) && parsed.content.length > 0) {
-      const c0 = parsed.content[0];
-      if (c0 && typeof c0.text === 'string') outText = c0.text;
-    }
-
-    if (!outText) {
-      return { body: '', error: 'Unexpected Bedrock response format' };
-    }
-
-    return { body: String(outText), error: '' };
+    // 2) Generate an image for the recipe
+    const imgRes = await invokeImageModel(safeIngredients);
+    // Even if image fails, return text with image error in error field
+    const errorMsg = imgRes.error ? `Image: ${imgRes.error}` : '';
+    return { body: String(textRes.text), imageBase64: imgRes.base64 || '', imageMimeType: imgRes.mime || '', error: errorMsg };
   } catch (err) {
     return { body: '', error: 'Handler error: ' + String(err && err.message ? err.message : err) };
   }

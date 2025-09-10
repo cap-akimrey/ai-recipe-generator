@@ -5,6 +5,8 @@ const schema = a.schema({
   BedrockResponse: a.customType({
     body: a.string(),
     error: a.string(),
+    imageBase64: a.string(),
+    imageMimeType: a.string(),
   }),
   askBedrock: a
     .query()
