@@ -129,26 +129,41 @@ function extractJson(text) {
 }
 
 async function invokeTextModel(ingredients) {
-  const prompt = [
-    'You are a helpful chef. Using ONLY these ingredients (you may add pantry staples like salt, pepper, oil, water):',
-    ingredients.join(', '),
-    '',
-    'Produce output strictly as minified JSON with two fields:',
-    '{"recipe":"<markdown recipe>","image_prompt":"<concise photorealistic dish prompt>"}',
-    '',
-    'Constraints:',
-    '- recipe: Complete, well-formatted Markdown with title, servings, ingredients with amounts, and numbered steps.',
-    '- image_prompt: 1–2 sentences describing the final plated dish, photorealistic food photography, no quantities, no instructions, suitable for text-to-image models.',
-    '- Output ONLY the JSON object without any commentary.'
-  ].join('\n');
-
   const payload = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: 1000,
     messages: [
       {
         role: 'user',
-        content: [{ type: 'text', text: '\n\nHuman: ' + prompt + '\n\nAssistant:' }],
+        content: [
+          {
+            type: 'text',
+            text: `You are a helpful chef and a discerning food expert. Your task is to create a recipe from a given list of ingredients.
+
+First, evaluate the ingredients:
+- Are they real, edible food items?
+- Can a sensible recipe be made from them?
+
+Produce output strictly as minified JSON with three fields: "recipe", "image_prompt", and "error".
+
+- If the ingredients are valid and a recipe can be made:
+  - "recipe": A complete, well-formatted Markdown string with title, servings, ingredients with amounts, and numbered steps.
+  - "image_prompt": A 1-2 sentence photorealistic description of the final plated dish for a text-to-image model.
+  - "error": null
+
+- If the ingredients are nonsensical, unreal, or cannot be combined into a reasonable dish:
+  - "recipe": null
+  - "image_prompt": null
+  - "error": A string explaining why a recipe cannot be created (e.g., "Ingredients are not valid food items.").
+
+Ingredients to use:
+${ingredients.join(', ')}
+
+Output ONLY the JSON object without any commentary.
+
+\n\nHuman: Here are my ingredients: ${ingredients.join(', ')}\n\nAssistant:`,
+          },
+        ],
       },
     ],
   };
@@ -189,12 +204,20 @@ async function invokeTextModel(ingredients) {
     return { text: '', imagePrompt: '', error: 'Unexpected Bedrock text response format' };
   }
 
-  const maybe = extractJson(outText);
-  if (!maybe || typeof maybe.recipe !== 'string' || typeof maybe.image_prompt !== 'string') {
-    return { text: '', imagePrompt: '', error: 'Text model did not return expected JSON' };
+  const modelJson = extractJson(outText);
+  if (!modelJson) {
+    return { text: '', imagePrompt: '', error: 'Text model did not return valid JSON' };
   }
 
-  return { text: String(maybe.recipe), imagePrompt: String(maybe.image_prompt), error: '' };
+  if (modelJson.error) {
+    return { text: '', imagePrompt: '', error: `Model error: ${modelJson.error}` };
+  }
+
+  if (typeof modelJson.recipe === 'string' && typeof modelJson.image_prompt === 'string') {
+    return { text: String(modelJson.recipe), imagePrompt: String(modelJson.image_prompt), error: '' };
+  }
+
+  return { text: '', imagePrompt: '', error: 'Text model did not return expected recipe/image_prompt fields' };
 }
 
 async function invokeImageModel(prompt) {
